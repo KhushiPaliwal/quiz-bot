@@ -50,13 +50,10 @@ These can be added later but are not part of the MVP:
 
 
 
-## 📌
-
-- Only taking one subject, Physics
-- Selected Three topics as of now
+## 📌 Hardcoding subject to Physics for now
 
 Selected Topics (Class 11 CBSE):
 
-Motion in a Straight Line - Kinematics, velocity, acceleration
-Laws of Motion - Newton's laws, momentum, force
-Work, Energy and Power - Energy conservation, work-energy theorem
+- Motion in a Straight Line - Kinematics, velocity, acceleration
+- Laws of Motion - Newton's laws, momentum, force
+- Work, Energy and Power - Energy conservation, work-energy theorem
