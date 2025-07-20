@@ -4,12 +4,17 @@ import threading
 import asyncio
 from flask import request
 from telegram import Update
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 
 
 #import sqlite3
 #import json
 import random
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from datetime import datetime
@@ -24,8 +29,8 @@ processed_updates = set()
 app = Flask(__name__)
 
 # Webhook configuration
-WEBHOOK_URL = "https://quiz-bot-971097042152.asia-south1.run.app/webhook"  # Your actual GCP domain
-BOT_TOKEN = "7435409239:AAG1T0IEHY2m7ie-1lMg9La4PmuSecP25qM"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://quiz-bot-971097042152.asia-south1.run.app/webhook")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Create application globally so it can be accessed by Flask routes
 application = None
@@ -781,6 +786,10 @@ def webhook():
 
 def main():
     """Main function to run the bot"""
+    # Validate bot token
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN environment variable is not set!")
+    
     # Initialize database and load questions
     # init_database()
     # load_questions_to_db()

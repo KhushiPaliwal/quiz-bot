@@ -12,8 +12,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of your bot code
-COPY . .
+# Copy the rest of your bot code (excluding .env)
+COPY bot.py .
+COPY requirements.txt .
 
 # Command to run the bot
 CMD ["python", "bot.py"]
