@@ -2,14 +2,6 @@ from flask import Flask
 import asyncio
 from flask import request
 from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-
-
-
-#import sqlite3
-#import json
 import random
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,8 +9,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 from datetime import datetime
 from collections import defaultdict
 
-#switched to in-memory storage for stats instead of a database
-user_stats_memory = {}
+# Load environment variables
+load_dotenv()
 
 # Track processed updates to prevent duplicates
 processed_updates = set()
@@ -32,47 +24,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 # Create application globally so it can be accessed by Flask routes
 application = None
 
-# Database setup
-# def init_database():
-#     conn = sqlite3.connect('physics_quiz.db')
-#     cursor = conn.cursor()
-    
-#     # Create tables
-#     cursor.execute('''
-#         CREATE TABLE IF NOT EXISTS questions (
-#             id INTEGER PRIMARY KEY,
-#             topic TEXT,
-#             question TEXT,
-#             option_a TEXT,
-#             option_b TEXT,
-#             option_c TEXT,
-#             option_d TEXT,
-#             correct_option TEXT,
-#             explanation TEXT
-#         )
-#     ''')
-    
-#     cursor.execute('''
-#         CREATE TABLE IF NOT EXISTS user_stats (
-#             user_id INTEGER,
-#             topic TEXT,
-#             score INTEGER,
-#             total_questions INTEGER,
-#             date TEXT,
-#             PRIMARY KEY (user_id, topic, date)
-#         )
-#     ''')
-    
-#     conn.commit()
-#     conn.close()
-
-
+# In-memory session storage
+active_sessions = {}
+user_stats_memory = {}
 
 # Static Questions for Class 11 CBSE Physics
-
-# used a python dictionary wheere each key is the topic, value is a list of questions
-#each question is again a dictionary with keys as "question", "options", "correct" and "explanation"
-
 PHYSICS_QUESTIONS = {
     "Motion in a Straight Line": [
         {
@@ -175,97 +131,94 @@ PHYSICS_QUESTIONS = {
             "explanation": "Inertia is the property of mass"
         },
         {
-            "question": "Force is a:",
-            "options": ["Scalar quantity", "Vector quantity", "Dimensionless quantity", "Fundamental quantity"],
+            "question": "Friction force always acts:",
+            "options": ["In direction of motion", "Opposite to motion", "Perpendicular to motion", "At 45° to motion"],
             "correct": "B",
-            "explanation": "Force has both magnitude and direction"
+            "explanation": "Friction always opposes relative motion"
         },
         {
-            "question": "Unit of momentum is:",
-            "options": ["kg⋅m/s", "kg⋅m/s²", "N⋅s", "Both A and C"],
-            "correct": "D",
-            "explanation": "Momentum unit is kg⋅m/s which equals N⋅s"
-        },
-        {
-            "question": "If net force on a body is zero, the body:",
-            "options": ["Must be at rest", "Must move with constant velocity", "May be at rest or moving with constant velocity", "Must be accelerating"],
+            "question": "Impulse is equal to:",
+            "options": ["Force", "Momentum", "Change in momentum", "Work done"],
             "correct": "C",
-            "explanation": "Zero net force means zero acceleration, so constant velocity or rest"
+            "explanation": "Impulse = Change in momentum"
         },
         {
-            "question": "Impulse equals:",
-            "options": ["Force × distance", "Force × time", "Mass × velocity", "Both B and C"],
-            "correct": "D",
-            "explanation": "Impulse = F×t = change in momentum = m×Δv"
+            "question": "For equilibrium, net force must be:",
+            "options": ["Maximum", "Minimum", "Zero", "Constant"],
+            "correct": "C",
+            "explanation": "For equilibrium, ΣF = 0"
+        },
+        {
+            "question": "Centripetal force is:",
+            "options": ["Real force", "Fictitious force", "Contact force", "Field force"],
+            "correct": "A",
+            "explanation": "Centripetal force is a real force directed toward center"
         }
     ],
     
     "Work, Energy and Power": [
         {
-            "question": "Work done by a force is maximum when angle between force and displacement is:",
-            "options": ["0°", "30°", "60°", "90°"],
-            "correct": "A",
-            "explanation": "Work = F⋅s⋅cos(θ), maximum when θ = 0°"
-        },
-        {
-            "question": "Kinetic energy of an object of mass 2 kg moving with velocity 10 m/s is:",
-            "options": ["20 J", "100 J", "200 J", "400 J"],
+            "question": "Work done by a force is maximum when:",
+            "options": ["Force is perpendicular to displacement", "Force is parallel to displacement", "Force is opposite to displacement", "Force is zero"],
             "correct": "B",
-            "explanation": "KE = ½mv² = ½ × 2 × 10² = 100 J"
+            "explanation": "W = F⋅s⋅cos(θ), maximum when θ = 0°"
         },
         {
-            "question": "Work done against gravity when lifting 5 kg object by 2 m is: (g = 10 m/s²)",
-            "options": ["10 J", "50 J", "100 J", "25 J"],
+            "question": "Kinetic energy of a body depends on:",
+            "options": ["Mass only", "Velocity only", "Mass and velocity", "Mass and acceleration"],
             "correct": "C",
-            "explanation": "Work = mgh = 5 × 10 × 2 = 100 J"
+            "explanation": "KE = ½mv² depends on both mass and velocity"
         },
         {
-            "question": "Power is defined as:",
-            "options": ["Work/Time", "Force × velocity", "Energy/Time", "All of the above"],
-            "correct": "D",
-            "explanation": "Power = Work/Time = Energy/Time = Force⋅velocity"
+            "question": "Potential energy is maximum at:",
+            "options": ["Ground level", "Maximum height", "Half height", "Any height"],
+            "correct": "B",
+            "explanation": "PE = mgh, maximum at maximum height"
         },
         {
-            "question": "Unit of power is:",
-            "options": ["Joule", "Newton", "Watt", "Joule/second"],
-            "correct": "C",
-            "explanation": "Power is measured in Watts (W)"
+            "question": "Power is the rate of:",
+            "options": ["Work done", "Energy consumed", "Force applied", "Distance covered"],
+            "correct": "A",
+            "explanation": "Power = Work done/Time"
         },
         {
-            "question": "A spring compressed by 2 cm has potential energy 8 J. Spring constant is:",
-            "options": ["200 N/m", "400 N/m", "800 N/m", "40000 N/m"],
-            "correct": "D",
-            "explanation": "PE = ½kx², 8 = ½k(0.02)², k = 40000 N/m"
+            "question": "For conservative forces:",
+            "options": ["Work done is path dependent", "Work done is path independent", "Work done is always zero", "Work done is always negative"],
+            "correct": "B",
+            "explanation": "Conservative forces: work independent of path"
+        },
+        {
+            "question": "Mechanical energy is conserved when:",
+            "options": ["Only conservative forces act", "Only non-conservative forces act", "Both types act", "No forces act"],
+            "correct": "A",
+            "explanation": "ME conserved when only conservative forces act"
+        },
+        {
+            "question": "Efficiency of a machine is:",
+            "options": ["Output/Input", "Input/Output", "Output × Input", "Output - Input"],
+            "correct": "A",
+            "explanation": "Efficiency = Useful output/Total input"
         },
         {
             "question": "Work-energy theorem states:",
-            "options": ["Work = Energy", "Work = Change in KE", "Work = PE", "Work = Total energy"],
+            "options": ["Work = Energy", "Work = Change in KE", "Work = Change in PE", "Work = Power"],
             "correct": "B",
             "explanation": "Work done = Change in kinetic energy"
         },
         {
-            "question": "Conservative force is one for which:",
-            "options": ["Work depends on path", "Work is independent of path", "Work is always zero", "Work is always positive"],
-            "correct": "B",
-            "explanation": "Conservative forces have path-independent work"
-        },
-        {
-            "question": "If a body is moving in a circle with constant speed, work done by centripetal force is:",
-            "options": ["Maximum", "Minimum", "Zero", "Depends on radius"],
+            "question": "Power unit in SI system is:",
+            "options": ["Joule", "Newton", "Watt", "Pascal"],
             "correct": "C",
-            "explanation": "Centripetal force is perpendicular to displacement, so work = 0"
+            "explanation": "Power is measured in Watts (W)"
         },
         {
-            "question": "Mechanical energy is conserved when:",
-            "options": ["Only conservative forces act", "Only non-conservative forces act", "All forces act", "No forces act"],
-            "correct": "A",
-            "explanation": "Mechanical energy conservation requires only conservative forces"
+            "question": "Energy cannot be:",
+            "options": ["Created", "Destroyed", "Both created and destroyed", "Transformed"],
+            "correct": "C",
+            "explanation": "Energy can be transformed but not created or destroyed"
         }
     ]
 }
-
-# In-memory session storage
-active_sessions = {}
 
 class QuizSession:
     def __init__(self, user_id, topic):
@@ -275,24 +228,6 @@ class QuizSession:
         self.current_question = 0
         self.score = 0
         self.answers = []
-
-# def load_questions_to_db():
-#     """Load static questions into database""" 
-#     conn = sqlite3.connect('physics_quiz.db')
-#     cursor = conn.cursor()
-    
-#     # Clear existing questions
-#     cursor.execute('DELETE FROM questions')
-    
-#     for topic, questions in PHYSICS_QUESTIONS.items():
-#         for q in questions:
-#             cursor.execute('''
-#                 INSERT INTO questions (topic, question, option_a, option_b, option_c, option_d, correct_option, explanation)
-#                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-#             ''', (topic, q['question'], q['options'][0], q['options'][1], q['options'][2], q['options'][3], q['correct'], q['explanation']))
-    
-#     conn.commit()
-#     conn.close()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command handler"""
@@ -313,7 +248,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Ready to test your physics knowledge?",
         reply_markup=reply_markup
     )
-    
+
 async def topic_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show topic selection"""
     query = update.callback_query
@@ -364,10 +299,19 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Create new quiz session
     active_sessions[user_id] = QuizSession(user_id, topic)
     
+    # Send quiz start message
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=f"🎯 Quiz Started!\n\n"
+             f"📚 Topic: {topic}\n"
+             f"❓ Questions: 5\n\n"
+             f"Good luck! 🍀"
+    )
+    
     await show_question(update, context)
 
 async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display current question"""
+    """Display current question as a new message"""
     query = update.callback_query
     user_id = query.from_user.id
     session = active_sessions[user_id]
@@ -389,21 +333,17 @@ async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = f"📝 Question {question_num}/5\n"
     text += f"📋 Topic: {session.topic}\n\n"
-    text += f"Q{question_num}.  {current_q['question']}"
+    text += f"Q{question_num}. {current_q['question']}"
     
-    try:
-        await query.edit_message_text(text, reply_markup=reply_markup)
-    except Exception as e:
-        print(f"⚠️ Error editing message in show_question: {e}")
-        # Try to send a new message if editing fails
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=text,
-            reply_markup=reply_markup
-        )
+    # Send new message instead of editing
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=text,
+        reply_markup=reply_markup
+    )
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process answer and show feedback"""
+    """Process answer and show feedback as new message"""
     query = update.callback_query
     
     # Answer the callback query with error handling
@@ -436,23 +376,25 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session.answers.append(user_answer)
     session.current_question += 1
     
-    # Show explanation
-    keyboard = [[InlineKeyboardButton("➡️ Next Question", callback_data="next_question")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    # Send feedback as new message
+    feedback_text = f"{result_text}\n\n"
+    feedback_text += f"🎯 {answer_feedback}\n\n"
+    feedback_text += f"💡 {current_q['explanation']}\n\n"
+    feedback_text += f"📊 Score: {session.score}/{session.current_question}"
     
-    text = f"{result_text}\n\n"
-    text += f"🎯 {answer_feedback}\n\n"
-    text += f"💡 {current_q['explanation']}\n\n"
-    text += f"📊 Score: {session.score}/{session.current_question}"
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=feedback_text
+    )
     
-    try:
-        await query.edit_message_text(text, reply_markup=reply_markup)
-    except Exception as e:
-        print(f"⚠️ Error editing message: {e}")
-        # Try to send a new message if editing fails
+    # Show next question button as separate message
+    if session.current_question < len(session.questions):
+        keyboard = [[InlineKeyboardButton("➡️ Next Question", callback_data="next_question")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await context.bot.send_message(
             chat_id=user_id,
-            text=text,
+            text="Ready for the next question?",
             reply_markup=reply_markup
         )
 
@@ -470,7 +412,7 @@ async def next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_question(update, context)
 
 async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show final quiz results"""
+    """Show final quiz results as new message"""
     query = update.callback_query
     
     # Answer the callback query with error handling
@@ -519,7 +461,12 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += f"🎖️ {grade}\n\n"
     text += "What would you like to do next?"
     
-    await query.edit_message_text(text, reply_markup=reply_markup)
+    # Send results as new message
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=text,
+        reply_markup=reply_markup
+    )
     
     # Clean up session
     del active_sessions[user_id]
@@ -536,7 +483,6 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Continue processing even if already answered
     
     user_id = query.from_user.id
-    
     results = user_stats_memory.get(user_id, [])
     
     if not results:
@@ -546,7 +492,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for entry in results:
             topic = entry["topic"]
             score = entry["score"]
-            total = entry.get("total_questions", 0)
+            total = entry.get("total_question", 0)
             date = entry["date"]
 
             if total == 0:
@@ -554,7 +500,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 percentage = (score / total) * 100
                 
-            text += f"📖 {topic[:20]}...\n"
+            text += f"📖 {topic}...\n"
             text += f"   Score: {score}/{total} ({percentage:.0f}%) - {date[:10]}\n\n"
     
     keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")]]
@@ -580,7 +526,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += "• /stats - View your statistics\n\n"
     text += "🎯 **Quiz Process:**\n"
     text += "1️⃣ Choose a physics topic\n"
-    text += "2️⃣ Answer 5 MCQ questions\n"
+    text += "2️⃣ Answer 5 questions\n"
     text += "3️⃣ Get instant feedback\n"
     text += "4️⃣ See your final score\n\n"
     text += "📖 **Available Topics:**\n"
@@ -642,25 +588,13 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Stats command"""
     user_id = update.message.from_user.id
     stats = user_stats_memory.get(user_id, [])
-    # conn = sqlite3.connect('physics_quiz.db')
-    # cursor = conn.cursor()
-    
-    # cursor.execute('''
-    #     SELECT topic, AVG(score), COUNT(*), MAX(score)
-    #     FROM user_stats
-    #     WHERE user_id = ?
-    #     GROUP BY topic
-    # ''', (user_id,))
-    
-    # results = cursor.fetchall()
-    # conn.close()
     
     if not stats:
         text = "📊 No statistics available yet!\n/quiz to start practicing."
     else:
         topic_data = defaultdict(list)
         for entry in stats:
-            topic_data[entry['topic']].append(entry['score'])
+            topic_data[f"{entry['topic']} ({entry['difficulty']})"].append(entry['score'])
 
         text = "📊 **Your Physics Performance:**\n\n"
         for topic, scores in topic_data.items():
@@ -792,17 +726,11 @@ def webhook():
 
 def main():
     """Main function to run the bot"""
-    # Debug: Print environment variables
     print(f"🔍 Debug: BOT_TOKEN = {'SET' if os.getenv('BOT_TOKEN') else 'NOT SET'}")
     print(f"🔍 Debug: WEBHOOK_URL = {os.getenv('WEBHOOK_URL', 'NOT SET')}")
     
-    # Validate bot token
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN environment variable is not set!")
-    
-    # Initialize database and load questions
-    # init_database()
-    # load_questions_to_db()
     
     # Create application
     global application
@@ -825,7 +753,6 @@ def main():
     application.add_handler(CallbackQueryHandler(show_help, pattern="help"))
     application.add_handler(CallbackQueryHandler(main_menu, pattern="main_menu"))
     
-    # Run the bot
     print("🤖 Physics Quiz Bot started!")
     print("📚 Loaded topics: Motion, Laws of Motion, Work-Energy-Power")
     print("📊 Questions loaded: 30 total (10 per topic)")
@@ -852,6 +779,7 @@ if __name__ == '__main__':
     
     # Start Flask app
     print("🚀 Starting Flask app...")
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
   
 
