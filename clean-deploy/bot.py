@@ -343,7 +343,7 @@ async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Process answer and show feedback as new message"""
+    """Process answer and show feedback in the same message"""
     query = update.callback_query
     
     # Answer the callback query with error handling
@@ -368,27 +368,62 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_correct:
         session.score += 1
         result_text = "✅ Correct!"
-        answer_feedback = f"Your answer: {user_answer}) {user_answer_text}"
+        answer_feedback = ""  # No need to repeat since button is green
     else:
         result_text = "❌ Wrong!"
-        answer_feedback = f"Your answer: {user_answer}) {user_answer_text}\nCorrect answer: {correct_answer}) {correct_answer_text}"
+        answer_feedback = ""  # No need to repeat since buttons show the answers
     
     session.answers.append(user_answer)
     session.current_question += 1
     
-    # Send feedback as new message
-    feedback_text = f"{result_text}\n\n"
-    feedback_text += f"🎯 {answer_feedback}\n\n"
-    feedback_text += f"💡 {current_q['explanation']}\n\n"
-    feedback_text += f"📊 Score: {session.score}/{session.current_question}"
+    # Create colored buttons based on answer
+    keyboard = []
+    for i, option in enumerate(current_q['options']):
+        button_text = f"{chr(65+i)}) {option}"
+        
+        if chr(65+i) == correct_answer:
+            # Correct answer is always green
+            button_text = f"✅ {button_text}"
+        elif chr(65+i) == user_answer and not is_correct:
+            # User's wrong answer is red
+            button_text = f"❌ {button_text}"
+        else:
+            # Other options remain normal
+            button_text = f"⚪ {button_text}"
+        
+        keyboard.append([InlineKeyboardButton(button_text, callback_data="answered")])
     
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=feedback_text
-    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Show next question button as separate message
-    if session.current_question < len(session.questions):
+    # Create the updated question text with feedback
+    question_num = session.current_question  # Current question number (1-based)
+    text = f"📝 Question {question_num}/5\n"
+    text += f"📋 Topic: {session.topic}\n\n"
+    text += f"Q{question_num}. {current_q['question']}\n\n"
+    text += f"🎯 {result_text}\n\n"
+    text += f"💡 {current_q['explanation']}\n\n"
+    text += f"📊 Score: {session.score}/{session.current_question}"
+    
+    # Edit the original question message with feedback
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except Exception as e:
+        print(f"⚠️ Error editing message: {e}")
+        # Fallback: send new message if editing fails
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=text,
+            reply_markup=reply_markup
+        )
+    
+    # Check if this was the last question
+    if session.current_question >= len(session.questions):
+        # Quiz is finished, show results after a short delay
+        import asyncio
+        await asyncio.sleep(2)  # Wait 2 seconds before showing results
+        await show_results(update, context)
+    else:
+        # Show next question button as separate message
         keyboard = [[InlineKeyboardButton("➡️ Next Question", callback_data="next_question")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -611,6 +646,18 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(text, reply_markup=reply_markup)
 
+async def handle_answered_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle clicks on already answered questions"""
+    query = update.callback_query
+    
+    try:
+        await query.answer()
+    except Exception as e:
+        print(f"⚠️ Callback query already answered: {e}")
+    
+    # Just acknowledge the click, no action needed
+    await query.answer("This question has already been answered!")
+
 async def setup_webhook():
     """Set up webhook with Telegram"""
     try:
@@ -748,6 +795,7 @@ def main():
     application.add_handler(CallbackQueryHandler(topic_selection, pattern="select_topic"))
     application.add_handler(CallbackQueryHandler(start_quiz, pattern="topic_"))
     application.add_handler(CallbackQueryHandler(handle_answer, pattern="answer_"))
+    application.add_handler(CallbackQueryHandler(handle_answered_question, pattern="answered"))
     application.add_handler(CallbackQueryHandler(next_question, pattern="next_question"))
     application.add_handler(CallbackQueryHandler(show_stats, pattern="^stats$"))
     application.add_handler(CallbackQueryHandler(show_help, pattern="help"))
