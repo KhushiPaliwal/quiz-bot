@@ -228,6 +228,7 @@ class QuizSession:
         self.current_question = 0
         self.score = 0
         self.answers = []
+        self.messages = []  # Track message IDs for cleanup
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command handler"""
@@ -296,17 +297,26 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topic = query.data.replace("topic_", "")
     user_id = query.from_user.id
     
+    # Delete the topic selection message
+    try:
+        await context.bot.delete_message(chat_id=user_id, message_id=query.message.message_id)
+    except Exception as e:
+        print(f"⚠️ Could not delete topic selection message: {e}")
+    
     # Create new quiz session
     active_sessions[user_id] = QuizSession(user_id, topic)
     
     # Send quiz start message
-    await context.bot.send_message(
+    start_msg = await context.bot.send_message(
         chat_id=user_id,
         text=f"🎯 Quiz Started!\n\n"
              f"📚 Topic: {topic}\n"
              f"❓ Questions: 5\n\n"
              f"Good luck! 🍀"
     )
+    
+    # Store message ID for cleanup
+    active_sessions[user_id].messages.append(start_msg.message_id)
     
     await show_question(update, context)
 
@@ -336,11 +346,14 @@ async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += f"Q{question_num}. {current_q['question']}"
     
     # Send new message instead of editing
-    await context.bot.send_message(
+    question_msg = await context.bot.send_message(
         chat_id=user_id,
         text=text,
         reply_markup=reply_markup
     )
+    
+    # Store message ID for cleanup
+    session.messages.append(question_msg.message_id)
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Process answer and show feedback in the same message"""
@@ -400,7 +413,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"📝 Question {question_num}/5\n"
     text += f"📋 Topic: {session.topic}\n\n"
     text += f"Q{question_num}. {current_q['question']}\n\n"
-    text += f"🎯 {result_text}\n\n"
+    #text += f"🎯 {result_text}\n\n"
     text += f"💡 {current_q['explanation']}\n\n"
     text += f"📊 Score: {session.score}/{session.current_question}"
     
@@ -423,15 +436,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(2)  # Wait 2 seconds before showing results
         await show_results(update, context)
     else:
-        # Show next question button as separate message
-        keyboard = [[InlineKeyboardButton("➡️ Next Question", callback_data="next_question")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="Ready for the next question?",
-            reply_markup=reply_markup
-        )
+        # Show next question directly
+        await show_question(update, context)
 
 async def next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Move to next question"""
@@ -459,6 +465,13 @@ async def show_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = query.from_user.id
     session = active_sessions[user_id]
+    
+    # Clean up ALL quiz messages
+    for message_id in session.messages:
+        try:
+            await context.bot.delete_message(chat_id=user_id, message_id=message_id)
+        except Exception as e:
+            print(f"⚠️ Could not delete message {message_id}: {e}")
     
     #Save stats to in-memory storage
     if user_id not in user_stats_memory:
@@ -796,10 +809,10 @@ def main():
     application.add_handler(CallbackQueryHandler(start_quiz, pattern="topic_"))
     application.add_handler(CallbackQueryHandler(handle_answer, pattern="answer_"))
     application.add_handler(CallbackQueryHandler(handle_answered_question, pattern="answered"))
-    application.add_handler(CallbackQueryHandler(next_question, pattern="next_question"))
     application.add_handler(CallbackQueryHandler(show_stats, pattern="^stats$"))
     application.add_handler(CallbackQueryHandler(show_help, pattern="help"))
     application.add_handler(CallbackQueryHandler(main_menu, pattern="main_menu"))
+    application.add_handler(CallbackQueryHandler(next_question, pattern="next_question"))
     
     print("🤖 Physics Quiz Bot started!")
     print("📚 Loaded topics: Motion, Laws of Motion, Work-Energy-Power")
