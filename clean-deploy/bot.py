@@ -8,9 +8,13 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, ApplicationBuilder
 from datetime import datetime
 from collections import defaultdict
+import openai  # Add OpenAI import
 
 # Load environment variables
 load_dotenv()
+
+# Initialize OpenAI client
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Track processed updates to prevent duplicates
 processed_updates = set()
@@ -28,7 +32,82 @@ application = None
 active_sessions = {}
 user_stats_memory = {}
 
+# List of available subjects for each class
+AVAILABLE_SUBJECTS = ["Science", "Maths"]
+
+# List of chapters/topics for each class and subject
+CHAPTERS = {
+    "7": {
+        "Science": [
+            "Nutrition in Plants", "Nutrition in Animals", "Fibre to Fabric", "Heat", "Acids, Bases and Salts", "Physical and Chemical Changes", "Weather, Climate and Adaptations", "Winds, Storms and Cyclones", "Soil", "Respiration in Organisms", "Transportation in Animals and Plants", "Reproduction in Plants", "Motion and Time", "Electric Current and its Effects", "Light", "Water: A Precious Resource", "Forests: Our Lifeline", "Wastewater Story"
+        ],
+        "Maths": [
+            "Integers", "Fractions and Decimals", "Data Handling", "Simple Equations", "Lines and Angles", "The Triangle and its Properties", "Congruence of Triangles", "Comparing Quantities", "Rational Numbers", "Practical Geometry", "Perimeter and Area", "Algebraic Expressions", "Exponents and Powers", "Symmetry", "Visualising Solid Shapes"
+        ]
+    },
+    "8": {
+        "Science": [
+            "Crop Production and Management", "Microorganisms: Friend and Foe", "Synthetic Fibres and Plastics", "Materials: Metals and Non-Metals", "Coal and Petroleum", "Combustion and Flame", "Conservation of Plants and Animals", "Cell: Structure and Functions", "Reproduction in Animals", "Reaching the Age of Adolescence", "Force and Pressure", "Friction", "Sound", "Chemical Effects of Electric Current", "Some Natural Phenomena", "Light", "Stars and the Solar System", "Pollution of Air and Water"
+        ],
+        "Maths": [
+            "Rational Numbers", "Linear Equations in One Variable", "Understanding Quadrilaterals", "Practical Geometry", "Data Handling", "Squares and Square Roots", "Cubes and Cube Roots", "Comparing Quantities", "Algebraic Expressions and Identities", "Visualising Solid Shapes", "Mensuration", "Exponents and Powers", "Direct and Inverse Proportions", "Factorisation", "Introduction to Graphs", "Playing with Numbers"
+        ]
+    },
+    "9": {
+        "Science": [
+            "Matter in Our Surroundings", "Is Matter Around Us Pure?", "Atoms and Molecules", "Structure of the Atom", "The Fundamental Unit of Life", "Tissues", "Diversity in Living Organisms", "Motion", "Force and Laws of Motion", "Gravitation", "Work and Energy", "Sound", "Why Do We Fall Ill?", "Natural Resources", "Improvement in Food Resources"
+        ],
+        "Maths": [
+            "Number Systems", "Polynomials", "Coordinate Geometry", "Linear Equations in Two Variables", "Introduction to Euclid’s Geometry", "Lines and Angles", "Triangles", "Quadrilaterals", "Areas of Parallelograms and Triangles", "Circles", "Constructions", "Heron’s Formula", "Surface Areas and Volumes", "Statistics", "Probability"
+        ]
+    }
+}
+
+async def class_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle class selection and show subject options"""
+    query = update.callback_query
+    try:
+        await query.answer()
+    except Exception:
+        pass
+    selected_class = query.data.replace("class_", "")
+    context.user_data["selected_class"] = selected_class
+    # Show subject options
+    keyboard = [
+        [InlineKeyboardButton(subject, callback_data=f"subject_{subject}")] for subject in AVAILABLE_SUBJECTS
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f"Class {selected_class} selected.\nNow choose your subject:",
+        reply_markup=reply_markup
+    )
+
+async def subject_selection_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle subject selection and show topic/chapter options"""
+    query = update.callback_query
+    try:
+        await query.answer()
+    except Exception:
+        pass
+    selected_subject = query.data.replace("subject_", "")
+    context.user_data["selected_subject"] = selected_subject
+    selected_class = context.user_data.get("selected_class")
+    topics = CHAPTERS.get(selected_class, {}).get(selected_subject, [])
+    if not topics:
+        await query.edit_message_text(f"No topics found for Class {selected_class} {selected_subject}.")
+        return
+    # Show topics as buttons (split into rows of 2 for readability)
+    keyboard = [
+        [InlineKeyboardButton(topic, callback_data=f"topic_{topic}")] for topic in topics
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f"Class {selected_class} - {selected_subject} selected.\nChoose a topic:",
+        reply_markup=reply_markup
+    )
+
 # Static Questions for Class 11 CBSE Physics
+""" 
 PHYSICS_QUESTIONS = {
     "Motion in a Straight Line": [
         {
@@ -219,6 +298,115 @@ PHYSICS_QUESTIONS = {
         }
     ]
 }
+"""
+
+# AI Question Generation Function
+async def generate_ai_question(subject, topic, difficulty, question_count=1):
+    """
+    Generate questions using OpenAI API
+    
+    Args:
+        subject (str): The subject (Physics, Chemistry, History, etc.)
+        topic (str): The specific topic/chapter
+        difficulty (str): Easy, Medium, or Hard
+        question_count (int): Number of questions to generate
+    
+    Returns:
+        list: List of question dictionaries or None if AI fails
+    """
+    try:
+        # Create the prompt for AI
+        prompt = f"""
+        Generate {question_count} multiple choice question(s) for {subject} - {topic} at {difficulty} difficulty level.
+        
+        Requirements:
+        - Question should be clear and educational
+        - 4 options (A, B, C, D) with only one correct answer
+        - Include detailed explanation for the correct answer
+        - Make it suitable for students
+        
+        Format the response as JSON:
+        {{
+            "questions": [
+                {{
+                    "question": "Question text here?",
+                    "options": ["Option A", "Option B", "Option C", "Option D"],
+                    "correct": "A",
+                    "explanation": "Detailed explanation of why this is correct"
+                }}
+            ]
+        }}
+        """
+        
+        # Call OpenAI API
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an expert educational content creator. Generate high-quality multiple choice questions."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1000,
+            temperature=0.7
+        )
+
+        # Print the raw response for debugging
+        print("AI raw response:", response)
+        
+        # Parse the response
+        ai_response = response.choices[0].message.content
+        
+        # Try to extract JSON from response
+        import json
+        try:
+            # Find JSON in the response (sometimes AI adds extra text)
+            start_idx = ai_response.find('{')
+            end_idx = ai_response.rfind('}') + 1
+            json_str = ai_response[start_idx:end_idx]
+            
+            data = json.loads(json_str)
+            return data.get('questions', [])
+            
+        except json.JSONDecodeError:
+            print(f"❌ Failed to parse AI response as JSON: {ai_response}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ AI question generation failed: {e}")
+        return None
+
+# Fallback questions for when AI fails
+FALLBACK_QUESTIONS = {
+    "Physics": {
+        "Motion in a Straight Line": [
+            {
+                "question": "A car accelerates from rest at 2 m/s² for 5 seconds. What is its final velocity?",
+                "options": ["5 m/s", "10 m/s", "15 m/s", "20 m/s"],
+                "correct": "B",
+                "explanation": "Using v = u + at, v = 0 + 2×5 = 10 m/s"
+            }
+        ]
+    },
+    "Chemistry": {
+        "Atomic Structure": [
+            {
+                "question": "Which subatomic particle has a positive charge?",
+                "options": ["Electron", "Proton", "Neutron", "Photon"],
+                "correct": "B",
+                "explanation": "Protons have a positive charge, electrons are negative, neutrons are neutral"
+            }
+        ]
+    },
+    "History": {
+        "Ancient Civilizations": [
+            {
+                "question": "Which ancient civilization built the pyramids?",
+                "options": ["Greeks", "Egyptians", "Romans", "Chinese"],
+                "correct": "B",
+                "explanation": "The ancient Egyptians built the pyramids as tombs for their pharaohs"
+            }
+        ]
+    }
+}
 
 class QuizSession:
     def __init__(self, user_id, topic):
@@ -232,23 +420,7 @@ class QuizSession:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command handler"""
-    # Send a loading message first
-    loading_msg = await update.message.reply_text("🔄 Loading... Please wait a moment.")
-    
-    keyboard = [
-        [InlineKeyboardButton("🎯 Start Quiz", callback_data="select_topic")],
-        [InlineKeyboardButton("📊 View Stats", callback_data="stats")],
-        [InlineKeyboardButton("❓ Help", callback_data="help")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Edit the loading message with the actual content
-    await loading_msg.edit_text(
-        "🔬 Welcome to Physics Quiz Bot!\n"
-        "📚 Class 11 CBSE Physics Practice\n\n"
-        "Ready to test your physics knowledge?",
-        reply_markup=reply_markup
-    )
+    await select_class(update, context)
 
 async def topic_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show topic selection"""
@@ -664,12 +836,9 @@ async def handle_answered_question(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     
     try:
-        await query.answer()
+        await query.answer("This question has already been answered!")
     except Exception as e:
         print(f"⚠️ Callback query already answered: {e}")
-    
-    # Just acknowledge the click, no action needed
-    await query.answer("This question has already been answered!")
 
 async def setup_webhook():
     """Set up webhook with Telegram"""
@@ -812,7 +981,8 @@ def main():
     application.add_handler(CallbackQueryHandler(show_stats, pattern="^stats$"))
     application.add_handler(CallbackQueryHandler(show_help, pattern="help"))
     application.add_handler(CallbackQueryHandler(main_menu, pattern="main_menu"))
-    application.add_handler(CallbackQueryHandler(next_question, pattern="next_question"))
+    application.add_handler(CallbackQueryHandler(class_selection_handler, pattern="class_"))
+    application.add_handler(CallbackQueryHandler(subject_selection_handler, pattern="subject_"))
     
     print("🤖 Physics Quiz Bot started!")
     print("📚 Loaded topics: Motion, Laws of Motion, Work-Energy-Power")
